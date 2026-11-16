@@ -15,9 +15,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -131,6 +132,7 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
         )
 
         val radius = minOf(size.width, size.height) * 0.29f
+
         val gold = Color(0xFFFFB547)
         val orange = Color(0xFFFF7417)
         val paleGold = Color(0xFFFFE0A0)
@@ -150,7 +152,7 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
             center = center
         )
 
-        // خطوط المدار الخارجية
+        // المدارات الخارجية المتحركة
         for (i in 0 until 5) {
             val rotation = angle *
                 (if (i % 2 == 0) 1f else -0.65f) + i * 36f
@@ -158,18 +160,16 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
             val ovalWidth = radius * (1.35f + i * 0.16f)
             val ovalHeight = radius * (0.48f + i * 0.09f)
 
-            rotate(
-                degrees = rotation,
-                pivotX = center.x,
-                pivotY = center.y
-            ) {
+            withTransform({
+                rotate(rotation, center)
+            }) {
                 drawOval(
                     color = gold.copy(alpha = 0.65f - i * 0.07f),
                     topLeft = Offset(
                         center.x - ovalWidth,
                         center.y - ovalHeight
                     ),
-                    size = androidx.compose.ui.geometry.Size(
+                    size = Size(
                         ovalWidth * 2,
                         ovalHeight * 2
                     ),
@@ -183,18 +183,16 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
             val rotation = angle *
                 (if (i % 2 == 0) 0.8f else -1.1f) + i * 22.5f
 
-            rotate(
-                degrees = rotation,
-                pivotX = center.x,
-                pivotY = center.y
-            ) {
+            withTransform({
+                rotate(rotation, center)
+            }) {
                 drawOval(
                     color = orange.copy(alpha = 0.35f),
                     topLeft = Offset(
                         center.x - radius,
                         center.y - radius * (0.35f + i * 0.035f)
                     ),
-                    size = androidx.compose.ui.geometry.Size(
+                    size = Size(
                         radius * 2,
                         radius * (0.7f + i * 0.07f)
                     ),
@@ -224,7 +222,7 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
             )
         }
 
-        // القلب المركزي
+        // القلب المركزي المتوهج
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
