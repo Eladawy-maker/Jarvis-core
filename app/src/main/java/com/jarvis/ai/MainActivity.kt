@@ -1,34 +1,27 @@
+
 package com.jarvis.ai
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.runtime.CompositionLocalProvider
+import kotlinx.coroutines.delay
+import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,114 +35,228 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun JarvisApp() {
-    val backgroundColor = Color(0xFF07111F)
-    val cyanColor = Color(0xFF00D9FF)
+    val gold = Color(0xFFFFB547)
+    val background = Color(0xFF080B10)
 
-    var message by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("جاهز للعمل") }
-
-    CompositionLocalProvider(
-        LocalLayoutDirection provides LayoutDirection.Rtl
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = gold,
+            background = background,
+            surface = background
+        )
     ) {
-        MaterialTheme(
-            colorScheme = darkColorScheme(
-                primary = cyanColor,
-                background = backgroundColor,
-                surface = Color(0xFF102235)
-            )
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = background
         ) {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = backgroundColor
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(background)
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                Column(
+                Text(
+                    text = "J.A.R.V.I.S",
+                    color = gold,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "HOLOGRAPHIC INTERFACE",
+                    color = Color(0xFFB87935),
+                    fontSize = 11.sp,
+                    letterSpacing = 3.sp
+                )
+
+                Spacer(modifier = Modifier.height(35.dp))
+
+                JarvisOrb(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "J.A.R.V.I.S",
-                        color = cyanColor,
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                        .fillMaxWidth()
+                        .height(340.dp)
+                )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(35.dp))
 
-                    Text(
-                        text = "نظام المساعدة الذكي",
-                        color = Color.White,
-                        fontSize = 18.sp
-                    )
+                Text(
+                    text = "J.A.R.V.I.S ONLINE",
+                    color = gold,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
 
-                    Spacer(modifier = Modifier.height(40.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(
-                        text = "◉",
-                        color = cyanColor,
-                        fontSize = 90.sp
-                    )
+                Text(
+                    text = "SYSTEM READY",
+                    color = Color(0xFF8A704F),
+                    fontSize = 11.sp,
+                    letterSpacing = 2.sp
+                )
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(45.dp))
 
-                    Text(
-                        text = status,
-                        color = cyanColor,
-                        fontSize = 18.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(35.dp))
-
-                    OutlinedTextField(
-                        value = message,
-                        onValueChange = { message = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = {
-                            Text("اكتب رسالة لجارفيس")
-                        },
-                        placeholder = {
-                            Text("أنا جاهز للاستماع...")
-                        },
-                        shape = RoundedCornerShape(16.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            status = if (message.isNotBlank()) {
-                                "استلمت رسالتك: $message"
-                            } else {
-                                "اكتب رسالة الأول"
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(55.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = cyanColor,
-                            contentColor = Color.Black
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Text(
-                            text = "إرسال",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(30.dp))
-
-                    Text(
-                        text = "JARVIS CORE • VERSION 1.0",
-                        color = Color.Gray,
-                        fontSize = 12.sp
-                    )
-                }
+                Text(
+                    text = "STARK INDUSTRIES • JARVIS CORE",
+                    color = Color.DarkGray,
+                    fontSize = 10.sp,
+                    letterSpacing = 1.sp
+                )
             }
+        }
+    }
+}
+
+@Composable
+fun JarvisOrb(modifier: Modifier = Modifier) {
+    var angle by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            angle = (angle + 1.2f) % 360f
+            delay(16)
+        }
+    }
+
+    Canvas(modifier = modifier) {
+        val center = Offset(
+            x = size.width / 2,
+            y = size.height / 2
+        )
+
+        val radius = minOf(size.width, size.height) * 0.29f
+        val gold = Color(0xFFFFB547)
+        val orange = Color(0xFFFF7417)
+        val paleGold = Color(0xFFFFE0A0)
+
+        // الهالة الخارجية
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0x44FF9D32),
+                    Color(0x18FF8C20),
+                    Color.Transparent
+                ),
+                center = center,
+                radius = radius * 2.1f
+            ),
+            radius = radius * 2.1f,
+            center = center
+        )
+
+        // خطوط المدار الخارجية
+        for (i in 0 until 5) {
+            val rotation = angle * (if (i % 2 == 0) 1f else -0.65f) +
+                i * 36f
+
+            val ovalWidth = radius * (1.35f + i * 0.16f)
+            val ovalHeight = radius * (0.48f + i * 0.09f)
+
+            rotate(
+                degrees = rotation,
+                pivot = center
+            ) {
+                drawOval(
+                    color = gold.copy(alpha = 0.65f - i * 0.07f),
+                    topLeft = Offset(
+                        center.x - ovalWidth,
+                        center.y - ovalHeight
+                    ),
+                    size = androidx.compose.ui.geometry.Size(
+                        ovalWidth * 2,
+                        ovalHeight * 2
+                    ),
+                    style = Stroke(width = 1.5.dp.toPx())
+                )
+            }
+        }
+
+        // حلقات الكرة المتقاطعة
+        for (i in 0 until 8) {
+            val rotation = angle * (if (i % 2 == 0) 0.8f else -1.1f) +
+                i * 22.5f
+
+            rotate(
+                degrees = rotation,
+                pivot = center
+            ) {
+                drawOval(
+                    color = orange.copy(alpha = 0.35f),
+                    topLeft = Offset(
+                        center.x - radius,
+                        center.y - radius * (0.35f + i * 0.035f)
+                    ),
+                    size = androidx.compose.ui.geometry.Size(
+                        radius * 2,
+                        radius * (0.7f + i * 0.07f)
+                    ),
+                    style = Stroke(width = 1.dp.toPx())
+                )
+            }
+        }
+
+        // نقاط البيانات المتحركة
+        for (i in 0 until 36) {
+            val orbit = radius * (0.65f + (i % 5) * 0.19f)
+            val radians = Math.toRadians(
+                (angle * (if (i % 2 == 0) 1.5f else -1f) + i * 10f).toDouble()
+            )
+
+            val x = center.x + cos(radians).toFloat() * orbit
+            val y = center.y + sin(radians).toFloat() * orbit * 0.65f
+
+            drawCircle(
+                color = if (i % 3 == 0) paleGold else orange,
+                radius = if (i % 3 == 0) 3.dp.toPx() else 1.5.dp.toPx(),
+                center = Offset(x, y)
+            )
+        }
+
+        // القلب المركزي
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.White,
+                    paleGold,
+                    gold,
+                    orange.copy(alpha = 0.5f),
+                    Color.Transparent
+                ),
+                center = center,
+                radius = radius * 0.8f
+            ),
+            radius = radius * 0.8f,
+            center = center
+        )
+
+        // مركز الطاقة
+        drawCircle(
+            color = Color.White.copy(alpha = 0.9f),
+            radius = radius * 0.12f,
+            center = center
+        )
+
+        // نقاط مضيئة إضافية حول القلب
+        for (i in 0 until 12) {
+            val radians = Math.toRadians(
+                (angle * 1.8f + i * 30f).toDouble()
+            )
+
+            val orbit = radius * 0.48f
+
+            drawCircle(
+                color = gold,
+                radius = 2.dp.toPx(),
+                center = Offset(
+                    center.x + cos(radians).toFloat() * orbit,
+                    center.y + sin(radians).toFloat() * orbit
+                )
+            )
         }
     }
 }
