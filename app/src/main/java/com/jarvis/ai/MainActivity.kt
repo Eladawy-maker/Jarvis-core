@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -151,15 +152,16 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
 
         // خطوط المدار الخارجية
         for (i in 0 until 5) {
-            val rotation = angle * (if (i % 2 == 0) 1f else -0.65f) +
-                i * 36f
+            val rotation = angle *
+                (if (i % 2 == 0) 1f else -0.65f) + i * 36f
 
             val ovalWidth = radius * (1.35f + i * 0.16f)
             val ovalHeight = radius * (0.48f + i * 0.09f)
 
             rotate(
                 degrees = rotation,
-                pivot = center
+                pivotX = center.x,
+                pivotY = center.y
             ) {
                 drawOval(
                     color = gold.copy(alpha = 0.65f - i * 0.07f),
@@ -178,12 +180,13 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
 
         // حلقات الكرة المتقاطعة
         for (i in 0 until 8) {
-            val rotation = angle * (if (i % 2 == 0) 0.8f else -1.1f) +
-                i * 22.5f
+            val rotation = angle *
+                (if (i % 2 == 0) 0.8f else -1.1f) + i * 22.5f
 
             rotate(
                 degrees = rotation,
-                pivot = center
+                pivotX = center.x,
+                pivotY = center.y
             ) {
                 drawOval(
                     color = orange.copy(alpha = 0.35f),
@@ -203,8 +206,12 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
         // نقاط البيانات المتحركة
         for (i in 0 until 36) {
             val orbit = radius * (0.65f + (i % 5) * 0.19f)
+
             val radians = Math.toRadians(
-                (angle * (if (i % 2 == 0) 1.5f else -1f) + i * 10f).toDouble()
+                (
+                    angle * (if (i % 2 == 0) 1.5f else -1f) +
+                        i * 10f
+                    ).toDouble()
             )
 
             val x = center.x + cos(radians).toFloat() * orbit
@@ -241,7 +248,7 @@ fun JarvisOrb(modifier: Modifier = Modifier) {
             center = center
         )
 
-        // نقاط مضيئة إضافية حول القلب
+        // نقاط مضيئة حول القلب
         for (i in 0 until 12) {
             val radians = Math.toRadians(
                 (angle * 1.8f + i * 30f).toDouble()
