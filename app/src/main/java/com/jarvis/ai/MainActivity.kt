@@ -15,8 +15,15 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -27,10 +34,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,10 +46,12 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import android.util.Base64
-import kotlin.math.*
 
 enum class JarvisState {
-    LISTENING, THINKING, SPEAKING, WAITING
+    LISTENING,
+    THINKING,
+    SPEAKING,
+    WAITING
 }
 
 class MainActivity : ComponentActivity() {
@@ -57,12 +64,15 @@ class MainActivity : ComponentActivity() {
     private var currentState by mutableStateOf(JarvisState.WAITING)
     private var lastMessage by mutableStateOf("SYSTEM READY")
 
-    // JARVIS AI SERVER
     private val serverUrl =
         "https://jarvis-ai-server.astrogame373.workers.dev/chat"
 
+    private var isActivityDestroyed = false
+
     private val restartListening = Runnable {
-        if (!isFinishing &&
+        if (
+            !isFinishing &&
+            !isActivityDestroyed &&
             currentState != JarvisState.SPEAKING &&
             currentState != JarvisState.THINKING
         ) {
@@ -76,7 +86,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             JarvisApp(
                 state = currentState,
-                message = lastMessage
+                message = lastMessage,
+                onInterrupt = {
+                    interruptJarvis()
+                }
             )
         }
 
@@ -91,14 +104,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
+        if (
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
         ) {
             initializeListening()
         } else {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+
+    // =========================================
+    // SPEECH RECOGNITION
+    // =========================================
 
     private fun initializeListening() {
 
@@ -107,75 +125,92 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        speechRecognizer =
-            SpeechRecognizer.createSpeechRecognizer(this)
+        try {
 
-        speechRecognizer?.setRecognitionListener(
-            object : RecognitionListener {
+            speechRecognizer?.destroy()
 
-                override fun onReadyForSpeech(params: Bundle?) {
-                    currentState = JarvisState.LISTENING
-                    lastMessage = "بسمعك يا فندم"
-                }
+            speechRecognizer =
+                SpeechRecognizer.createSpeechRecognizer(this)
 
-                override fun onBeginningOfSpeech() {
-                    currentState = JarvisState.LISTENING
-                }
+            speechRecognizer?.setRecognitionListener(
+                object : RecognitionListener {
 
-                override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        if (currentState != JarvisState.SPEAKING) {
+                            currentState = JarvisState.LISTENING
+                            lastMessage = "بسمعك يا فندم"
+                        }
+                    }
 
-                override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onBeginningOfSpeech() {
+                        currentState = JarvisState.LISTENING
+                    }
 
-                override fun onEndOfSpeech() {
-                    currentState = JarvisState.THINKING
-                    lastMessage = "ثواني أفكر يا فندم"
-                }
+                    override fun onRmsChanged(rmsdB: Float) {}
 
-                override fun onError(error: Int) {
+                    override fun onBufferReceived(buffer: ByteArray?) {}
 
-                    if (currentState != JarvisState.SPEAKING &&
-                        currentState != JarvisState.THINKING
-                    ) {
-                        currentState = JarvisState.WAITING
+                    override fun onEndOfSpeech() {
+                        currentState = JarvisState.THINKING
+                        lastMessage = "ثواني أفكر يا فندم"
+                    }
+
+                    override fun onError(error: Int) {
+
+                        if (
+                            currentState != JarvisState.SPEAKING &&
+                            currentState != JarvisState.THINKING
+                        ) {
+                            currentState = JarvisState.WAITING
+
+                            handler.removeCallbacks(restartListening)
+                            handler.postDelayed(restartListening, 1000)
+                        }
+                    }
+
+                    override fun onResults(results: Bundle?) {
+
+                        val spokenText =
+                            results?.getStringArrayList(
+                                SpeechRecognizer.RESULTS_RECOGNITION
+                            )?.firstOrNull()
+
+                        if (spokenText.isNullOrBlank()) {
+                            currentState = JarvisState.WAITING
+                            handler.postDelayed(restartListening, 700)
+                            return
+                        }
 
                         handler.removeCallbacks(restartListening)
-                        handler.postDelayed(restartListening, 1200)
-                    }
-                }
 
-                override fun onResults(results: Bundle?) {
+                        lastMessage = spokenText
+                        currentState = JarvisState.THINKING
 
-                    val spokenText =
-                        results?.getStringArrayList(
-                            SpeechRecognizer.RESULTS_RECOGNITION
-                        )?.firstOrNull()
-
-                    if (spokenText.isNullOrBlank()) {
-                        currentState = JarvisState.WAITING
-                        handler.postDelayed(restartListening, 700)
-                        return
+                        sendToJarvis(spokenText)
                     }
 
-                    handler.removeCallbacks(restartListening)
+                    override fun onPartialResults(partialResults: Bundle?) {}
 
-                    lastMessage = spokenText
-                    currentState = JarvisState.THINKING
-
-                    sendToJarvis(spokenText)
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
                 }
+            )
 
-                override fun onPartialResults(partialResults: Bundle?) {}
+            startListening()
 
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            }
-        )
+        } catch (e: Exception) {
 
-        startListening()
+            currentState = JarvisState.WAITING
+            lastMessage = "MICROPHONE INITIALIZATION ERROR"
+
+            handler.postDelayed(restartListening, 1500)
+        }
     }
 
     private fun startListening() {
 
-        if (isFinishing ||
+        if (
+            isFinishing ||
+            isActivityDestroyed ||
             currentState == JarvisState.SPEAKING ||
             currentState == JarvisState.THINKING
         ) return
@@ -209,6 +244,16 @@ class MainActivity : ComponentActivity() {
                         RecognizerIntent.EXTRA_PARTIAL_RESULTS,
                         false
                     )
+
+                    putExtra(
+                        RecognizerIntent.EXTRA_CALLING_PACKAGE,
+                        packageName
+                    )
+
+                    putExtra(
+                        RecognizerIntent.EXTRA_PROMPT,
+                        ""
+                    )
                 }
 
             speechRecognizer?.startListening(intent)
@@ -216,8 +261,51 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
 
             currentState = JarvisState.WAITING
+            handler.removeCallbacks(restartListening)
             handler.postDelayed(restartListening, 1500)
         }
+    }
+
+    // =========================================
+    // INTERRUPT JARVIS
+    // =========================================
+
+    private fun interruptJarvis() {
+
+        if (currentState != JarvisState.SPEAKING) return
+
+        handler.removeCallbacks(restartListening)
+
+        // إيقاف صوت جارفيس فورًا
+        try {
+            mediaPlayer?.let { player ->
+                try {
+                    player.stop()
+                } catch (_: Exception) {
+                }
+
+                player.release()
+            }
+        } catch (_: Exception) {
+        }
+
+        mediaPlayer = null
+
+        // إلغاء أي جلسة استماع قديمة
+        try {
+            speechRecognizer?.cancel()
+        } catch (_: Exception) {
+        }
+
+        currentState = JarvisState.WAITING
+        lastMessage = "اتفضل يا فندم، سامعك"
+
+        // إعادة تشغيل الاستماع
+        handler.postDelayed({
+            if (!isFinishing && !isActivityDestroyed) {
+                startListening()
+            }
+        }, 350)
     }
 
     // =========================================
@@ -267,11 +355,13 @@ class MainActivity : ComponentActivity() {
                 val responseCode = connection.responseCode
 
                 val responseText =
-                    (if (responseCode in 200..299) {
-                        connection.inputStream
-                    } else {
-                        connection.errorStream
-                    })?.bufferedReader()?.use {
+                    (
+                        if (responseCode in 200..299) {
+                            connection.inputStream
+                        } else {
+                            connection.errorStream
+                        }
+                    )?.bufferedReader()?.use {
                         it.readText()
                     } ?: throw Exception("Empty server response")
 
@@ -281,36 +371,21 @@ class MainActivity : ComponentActivity() {
 
                     val details = response.optString(
                         "details",
-                        response.optString(
-                            "error",
-                            "Server error"
-                        )
+                        response.optString("error", "Server error")
                     )
 
                     throw Exception("HTTP $responseCode: $details")
                 }
 
-                val success = response.optBoolean("success", false)
-
-                if (!success) {
+                if (!response.optBoolean("success", false)) {
                     throw Exception(
-                        response.optString(
-                            "error",
-                            "JARVIS SERVER ERROR"
-                        )
+                        response.optString("error", "JARVIS SERVER ERROR")
                     )
                 }
 
                 val reply = response.optString("reply", "")
-
-                val audioBase64 =
-                    response.optString("audioBase64", "")
-
-                val audioMimeType =
-                    response.optString("audioMimeType", "")
-
-                val audioError =
-                    response.optString("audioError", "")
+                val audioBase64 = response.optString("audioBase64", "")
+                val audioError = response.optString("audioError", "")
 
                 if (reply.isBlank()) {
                     throw Exception("Server returned an empty reply")
@@ -333,7 +408,6 @@ class MainActivity : ComponentActivity() {
                     throw Exception("Audio data is empty")
                 }
 
-                // ELEVENLABS RETURNS MP3
                 val audioFile =
                     File(cacheDir, "jarvis_reply.mp3")
 
@@ -341,10 +415,8 @@ class MainActivity : ComponentActivity() {
 
                 runOnUiThread {
 
-                    if (!isFinishing) {
-
+                    if (!isFinishing && !isActivityDestroyed) {
                         lastMessage = reply
-
                         playJarvisAudio(audioFile)
                     }
                 }
@@ -353,10 +425,9 @@ class MainActivity : ComponentActivity() {
 
                 runOnUiThread {
 
-                    if (!isFinishing) {
+                    if (!isFinishing && !isActivityDestroyed) {
 
                         currentState = JarvisState.WAITING
-
                         lastMessage = "حصل خطأ في الاتصال"
 
                         Toast.makeText(
@@ -365,15 +436,12 @@ class MainActivity : ComponentActivity() {
                             Toast.LENGTH_LONG
                         ).show()
 
-                        handler.postDelayed(
-                            restartListening,
-                            2000
-                        )
+                        handler.removeCallbacks(restartListening)
+                        handler.postDelayed(restartListening, 2000)
                     }
                 }
 
             } finally {
-
                 connection?.disconnect()
             }
 
@@ -393,15 +461,14 @@ class MainActivity : ComponentActivity() {
 
             currentState = JarvisState.SPEAKING
 
-            lastMessage = lastMessage
-
             val player = MediaPlayer()
-
             mediaPlayer = player
 
             player.setOnPreparedListener { preparedPlayer ->
 
-                if (!isFinishing &&
+                if (
+                    !isFinishing &&
+                    !isActivityDestroyed &&
                     mediaPlayer === preparedPlayer
                 ) {
                     preparedPlayer.start()
@@ -418,18 +485,13 @@ class MainActivity : ComponentActivity() {
                     mediaPlayer = null
                 }
 
-                if (!isFinishing) {
+                if (!isFinishing && !isActivityDestroyed) {
 
                     currentState = JarvisState.WAITING
-
                     lastMessage = "مستني أوامرك يا فندم"
 
                     handler.removeCallbacks(restartListening)
-
-                    handler.postDelayed(
-                        restartListening,
-                        900
-                    )
+                    handler.postDelayed(restartListening, 900)
                 }
             }
 
@@ -441,23 +503,19 @@ class MainActivity : ComponentActivity() {
                     mediaPlayer = null
                 }
 
-                if (!isFinishing) {
+                if (!isFinishing && !isActivityDestroyed) {
 
                     currentState = JarvisState.WAITING
-
                     lastMessage = "تعذر تشغيل الصوت"
 
-                    handler.postDelayed(
-                        restartListening,
-                        1200
-                    )
+                    handler.removeCallbacks(restartListening)
+                    handler.postDelayed(restartListening, 1200)
                 }
 
                 true
             }
 
             player.setDataSource(file.absolutePath)
-
             player.prepareAsync()
 
         } catch (e: Exception) {
@@ -474,22 +532,33 @@ class MainActivity : ComponentActivity() {
                 Toast.LENGTH_LONG
             ).show()
 
-            handler.postDelayed(
-                restartListening,
-                1500
-            )
+            handler.postDelayed(restartListening, 1500)
         }
     }
 
+    // =========================================
+    // DESTROY
+    // =========================================
+
     override fun onDestroy() {
+
+        isActivityDestroyed = true
 
         handler.removeCallbacksAndMessages(null)
 
-        speechRecognizer?.cancel()
-        speechRecognizer?.destroy()
+        try {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+        } catch (_: Exception) {
+        }
+
         speechRecognizer = null
 
-        mediaPlayer?.release()
+        try {
+            mediaPlayer?.release()
+        } catch (_: Exception) {
+        }
+
         mediaPlayer = null
 
         super.onDestroy()
@@ -497,13 +566,14 @@ class MainActivity : ComponentActivity() {
 }
 
 // =====================================================
-// JARVIS CINEMATIC INTERFACE
+// JARVIS MAIN INTERFACE
 // =====================================================
 
 @Composable
 fun JarvisApp(
     state: JarvisState,
-    message: String
+    message: String,
+    onInterrupt: () -> Unit
 ) {
 
     val gold = Color(0xFFFFB84D)
@@ -535,6 +605,7 @@ fun JarvisApp(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
 
+                // HEADER
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -580,10 +651,11 @@ fun JarvisApp(
                                 modifier = Modifier
                                     .size(7.dp)
                                     .background(
-                                        if (state == JarvisState.WAITING)
+                                        if (state == JarvisState.WAITING) {
                                             gold
-                                        else
-                                            Color(0xFFFF8A26),
+                                        } else {
+                                            Color(0xFFFF8A26)
+                                        },
                                         CircleShape
                                     )
                             )
@@ -602,6 +674,7 @@ fun JarvisApp(
 
                 Spacer(modifier = Modifier.height(15.dp))
 
+                // GOLD DIVIDER
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -641,6 +714,7 @@ fun JarvisApp(
                     )
                 }
 
+                // MAIN ORB
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -651,11 +725,16 @@ fun JarvisApp(
                     JarvisOrb(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .fillMaxHeight(),
+                            .fillMaxHeight()
+                            .clickable(
+                                enabled = state == JarvisState.SPEAKING,
+                                onClick = onInterrupt
+                            ),
                         state = state
                     )
                 }
 
+                // STATUS
                 Text(
                     text = when (state) {
                         JarvisState.LISTENING -> "LISTENING"
@@ -679,8 +758,25 @@ fun JarvisApp(
                     maxLines = 2
                 )
 
+                // INTERRUPT INSTRUCTION
+                if (state == JarvisState.SPEAKING) {
+
+                    Spacer(modifier = Modifier.height(9.dp))
+
+                    Text(
+                        text = "اضغط على الكرة لمقاطعة جارفيس",
+                        color = Color(0xFFFFB84D),
+                        fontSize = 11.sp,
+                        letterSpacing = 0.5.sp,
+                        modifier = Modifier.clickable {
+                            onInterrupt()
+                        }
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // SYSTEM PANELS
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -695,7 +791,11 @@ fun JarvisApp(
                     HudPanel(
                         modifier = Modifier.weight(1f),
                         title = "VOICE",
-                        value = "READY"
+                        value = if (state == JarvisState.SPEAKING) {
+                            "SPEAKING"
+                        } else {
+                            "READY"
+                        }
                     )
 
                     HudPanel(
@@ -717,6 +817,10 @@ fun JarvisApp(
         }
     }
 }
+
+// =====================================================
+// HUD PANEL
+// =====================================================
 
 @Composable
 fun HudPanel(
@@ -754,7 +858,7 @@ fun HudPanel(
 }
 
 // =====================================================
-// ARC REACTOR ANIMATION
+// JARVIS 3D ORB
 // =====================================================
 
 @Composable
@@ -763,33 +867,28 @@ fun JarvisOrb(
     state: JarvisState
 ) {
 
-    var angle by remember {
-        mutableFloatStateOf(0f)
-    }
+    // لا توجد حركة دورية إلا أثناء كلام جارفيس
+    val pulse = if (state == JarvisState.SPEAKING) {
 
-    var pulse by remember {
-        mutableFloatStateOf(0f)
-    }
+        val transition = rememberInfiniteTransition(
+            label = "JarvisSpeaking"
+        )
 
-    LaunchedEffect(state) {
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = 900,
+                    easing = FastOutSlowInEasing
+                ),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "OrbPulse"
+        ).value
 
-        while (true) {
-
-            val speed = when (state) {
-                JarvisState.LISTENING -> 2.8f
-                JarvisState.THINKING -> 5.0f
-                JarvisState.SPEAKING -> 3.8f
-                JarvisState.WAITING -> 0.8f
-            }
-
-            angle = (angle + speed) % 360f
-
-            pulse = (
-                sin(Math.toRadians(angle.toDouble())).toFloat() + 1f
-            ) / 2f
-
-            delay(16)
-        }
+    } else {
+        0f
     }
 
     Canvas(modifier = modifier) {
@@ -799,226 +898,146 @@ fun JarvisOrb(
             size.height / 2f
         )
 
-        val radius =
+        val baseRadius =
             minOf(size.width, size.height) * 0.27f
 
+        val radius =
+            baseRadius * (
+                if (state == JarvisState.SPEAKING) {
+                    1f + pulse * 0.035f
+                } else {
+                    1f
+                }
+            )
+
         val gold = Color(0xFFFFB84D)
-        val brightGold = Color(0xFFFFE2A1)
-        val orange = Color(0xFFFF7417)
-        val darkGold = Color(0xFF70451E)
+        val brightGold = Color(0xFFFFE5B0)
+        val orange = Color(0xFFFF841F)
+        val darkGold = Color(0xFF5A3215)
 
-        val glow = 0.65f + pulse * 0.35f
+        val glowStrength = when (state) {
+            JarvisState.WAITING -> 0.22f
+            JarvisState.LISTENING -> 0.32f
+            JarvisState.THINKING -> 0.38f
+            JarvisState.SPEAKING -> 0.42f + pulse * 0.25f
+        }
 
+        val glowRadius =
+            radius * if (state == JarvisState.SPEAKING) {
+                1.9f + pulse * 0.2f
+            } else {
+                1.7f
+            }
+
+        // OUTER GLOW
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color(0x55FF9B30),
-                    Color(0x22FF8C20),
+                    orange.copy(alpha = glowStrength),
+                    gold.copy(alpha = glowStrength * 0.35f),
                     Color.Transparent
                 ),
                 center = center,
-                radius = radius * 2.3f
+                radius = glowRadius
             ),
-            radius = radius * 2.3f,
+            radius = glowRadius,
             center = center
         )
 
-        for (i in 0 until 4) {
+        // OUTER SHELL
+        drawCircle(
+            color = darkGold.copy(alpha = 0.9f),
+            radius = radius * 1.04f,
+            center = center
+        )
 
-            val r = radius * (1.75f + i * 0.13f)
-
-            drawCircle(
-                color = darkGold.copy(alpha = 0.55f),
-                radius = r,
-                center = center,
-                style = Stroke(width = 1.dp.toPx())
-            )
-        }
-
-        for (i in 0 until 3) {
-
-            val ringRadius =
-                radius * (1.55f + i * 0.17f)
-
-            withTransform({
-
-                rotate(
-                    angle * (if (i % 2 == 0) 1f else -0.7f) + i * 55f,
-                    center
-                )
-
-            }) {
-
-                drawArc(
-                    color = gold.copy(alpha = 0.9f - i * 0.15f),
-                    startAngle = 20f,
-                    sweepAngle = 105f,
-                    useCenter = false,
-                    topLeft = Offset(
-                        center.x - ringRadius,
-                        center.y - ringRadius
-                    ),
-                    size = Size(
-                        ringRadius * 2,
-                        ringRadius * 2
-                    ),
-                    style = Stroke(width = 3.dp.toPx())
-                )
-
-                drawArc(
-                    color = orange.copy(alpha = 0.75f),
-                    startAngle = 205f,
-                    sweepAngle = 65f,
-                    useCenter = false,
-                    topLeft = Offset(
-                        center.x - ringRadius,
-                        center.y - ringRadius
-                    ),
-                    size = Size(
-                        ringRadius * 2,
-                        ringRadius * 2
-                    ),
-                    style = Stroke(width = 2.dp.toPx())
-                )
-            }
-        }
-
-        for (i in 0 until 8) {
-
-            val rotation =
-                angle * (if (i % 2 == 0) 1f else -1f) + i * 45f
-
-            withTransform({
-                rotate(rotation, center)
-            }) {
-
-                drawArc(
-                    color = gold.copy(alpha = 0.65f),
-                    startAngle = 0f,
-                    sweepAngle = 24f,
-                    useCenter = false,
-                    topLeft = Offset(
-                        center.x - radius * 1.3f,
-                        center.y - radius * 1.3f
-                    ),
-                    size = Size(
-                        radius * 2.6f,
-                        radius * 2.6f
-                    ),
-                    style = Stroke(width = 4.dp.toPx())
-                )
-            }
-        }
-
-        for (i in 0 until 48) {
-
-            val radians = Math.toRadians(
-                (i * 7.5f + angle * 0.3f).toDouble()
-            )
-
-            val inner = radius * 1.9f
-
-            val outer =
-                if (i % 4 == 0)
-                    radius * 2.08f
-                else
-                    radius * 1.98f
-
-            val x1 =
-                center.x + cos(radians).toFloat() * inner
-
-            val y1 =
-                center.y + sin(radians).toFloat() * inner
-
-            val x2 =
-                center.x + cos(radians).toFloat() * outer
-
-            val y2 =
-                center.y + sin(radians).toFloat() * outer
-
-            drawLine(
-                color = gold.copy(
-                    alpha = if (i % 4 == 0) 0.85f else 0.3f
-                ),
-                start = Offset(x1, y1),
-                end = Offset(x2, y2),
-                strokeWidth =
-                    if (i % 4 == 0)
-                        2.dp.toPx()
-                    else
-                        1.dp.toPx()
-            )
-        }
-
-        for (i in 0 until 3) {
-
-            val r = radius * (0.9f + i * 0.16f)
-
-            drawCircle(
-                color = gold.copy(alpha = 0.8f - i * 0.15f),
-                radius = r,
-                center = center,
-                style = Stroke(width = 2.dp.toPx())
-            )
-        }
-
+        // 3D SPHERE BODY
         drawCircle(
             brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White,
-                    brightGold,
-                    gold,
-                    orange.copy(alpha = 0.8f),
-                    Color.Transparent
+                colorStops = arrayOf(
+                    0.0f to Color(0xFFFFF4D8),
+                    0.12f to brightGold,
+                    0.32f to gold,
+                    0.58f to Color(0xFFCF7827),
+                    0.78f to Color(0xFF713A18),
+                    1.0f to Color(0xFF160E0A)
                 ),
-                center = center,
-                radius = radius * (0.78f + pulse * 0.08f)
+                center = Offset(
+                    center.x - radius * 0.32f,
+                    center.y - radius * 0.38f
+                ),
+                radius = radius * 1.65f
             ),
-            radius = radius * (0.78f + pulse * 0.08f),
+            radius = radius,
             center = center
         )
 
+        // SPHERE EDGE
         drawCircle(
-            color = Color.White.copy(alpha = 0.95f),
-            radius = radius * 0.16f,
-            center = center
-        )
-
-        drawCircle(
-            color = brightGold.copy(alpha = glow),
-            radius = radius * 0.34f,
+            color = gold.copy(alpha = 0.65f),
+            radius = radius,
             center = center,
-            style = Stroke(width = 3.dp.toPx())
+            style = Stroke(width = 1.5.dp.toPx())
         )
 
-        for (i in 0 until 32) {
-
-            val orbit =
-                radius * (1.15f + (i % 4) * 0.22f)
-
-            val radians = Math.toRadians(
-                (
-                    angle * (if (i % 2 == 0) 1.5f else -1f) +
-                        i * 11.25f
-                    ).toDouble()
+        // SURFACE REFLECTION
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = 0.75f),
+                    brightGold.copy(alpha = 0.25f),
+                    Color.Transparent
+                ),
+                center = Offset(
+                    center.x - radius * 0.34f,
+                    center.y - radius * 0.38f
+                ),
+                radius = radius * 0.75f
+            ),
+            radius = radius * 0.75f,
+            center = Offset(
+                center.x - radius * 0.34f,
+                center.y - radius * 0.38f
             )
+        )
 
-            val x =
-                center.x + cos(radians).toFloat() * orbit
+        // INNER ENERGY CORE
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = 0.9f),
+                    brightGold.copy(alpha = 0.55f),
+                    Color.Transparent
+                ),
+                center = center,
+                radius = radius * 0.48f
+            ),
+            radius = radius * 0.48f,
+            center = center
+        )
 
-            val y =
-                center.y + sin(radians).toFloat() * orbit
+        // LIGHT REFLECTION
+        drawCircle(
+            color = Color.White.copy(alpha = 0.85f),
+            radius = radius * 0.045f,
+            center = Offset(
+                center.x - radius * 0.32f,
+                center.y - radius * 0.39f
+            )
+        )
+
+        // SPEAKING ENERGY RING
+        if (state == JarvisState.SPEAKING) {
 
             drawCircle(
-                color = if (i % 3 == 0)
-                    brightGold
-                else
-                    orange,
-                radius = if (i % 3 == 0)
-                    3.dp.toPx()
-                else
-                    1.5.dp.toPx(),
-                center = Offset(x, y)
+                color = brightGold.copy(
+                    alpha = 0.25f + pulse * 0.35f
+                ),
+                radius = radius * (1.12f + pulse * 0.12f),
+                center = center,
+                style = Stroke(
+                    width = (1.5f + pulse * 2f).dp.toPx()
+                )
             )
         }
     }
