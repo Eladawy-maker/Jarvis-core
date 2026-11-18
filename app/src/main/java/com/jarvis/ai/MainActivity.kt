@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
     private var introFinished = false
 
     private var requestInProgress = false
-    private var recognizerGeneration = 0
+    private var recognitionActive = false
     private var restartRunnable: Runnable? = null
 
     private val serverUrl =
@@ -75,7 +75,10 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission()
         ) { granted ->
             if (granted) {
+                initializeSpeechRecognizer()
                 startListening()
+            } else {
+                jarvisState = JarvisState.WAITING
             }
         }
 
@@ -111,6 +114,7 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         ) {
+            initializeSpeechRecognizer()
             startListening()
         } else {
             microphonePermissionLauncher.launch(
@@ -119,72 +123,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun scheduleListening(
-        delayMillis: Long,
-        recreate: Boolean = true
-    ) {
-        if (!introFinished || isFinishing || isDestroyed) return
-
-        restartRunnable?.let {
-            handler.removeCallbacks(it)
-        }
-
-        val task = Runnable {
-            restartRunnable = null
-
-            if (!introFinished || isFinishing || isDestroyed) return@Runnable
-
-            if (
-                checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-                PackageManager.PERMISSION_GRANTED
-            ) return@Runnable
-
-            if (recreate) {
-                startListening()
-            }
-        }
-
-        restartRunnable = task
-        handler.postDelayed(task, delayMillis)
-    }
-
-    private fun startListening() {
-        if (!introFinished || isFinishing || isDestroyed) return
-        if (requestInProgress) return
-
-        if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) return
-
-        restartRunnable?.let {
-            handler.removeCallbacks(it)
-            restartRunnable = null
-        }
-
+    private fun initializeSpeechRecognizer() {
+        if (speechRecognizer != null) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             jarvisState = JarvisState.WAITING
-            scheduleListening(2500)
+            scheduleListening(3000)
             return
         }
-
-        // إبطال أي جلسة استماع قديمة قبل إنشاء جلسة جديدة
-        recognizerGeneration++
-        val currentGeneration = recognizerGeneration
-
-        speechRecognizer?.let { oldRecognizer ->
-            try {
-                oldRecognizer.cancel()
-            } catch (_: Exception) {
-            }
-
-            try {
-                oldRecognizer.destroy()
-            } catch (_: Exception) {
-            }
-        }
-
-        speechRecognizer = null
 
         try {
             val recognizer =
@@ -196,12 +141,12 @@ class MainActivity : ComponentActivity() {
                 object : RecognitionListener {
 
                     override fun onReadyForSpeech(params: Bundle?) {
-                        if (currentGeneration != recognizerGeneration) return
+                        recognitionActive = true
                         jarvisState = JarvisState.LISTENING
                     }
 
                     override fun onBeginningOfSpeech() {
-                        if (currentGeneration != recognizerGeneration) return
+                        recognitionActive = true
                         jarvisState = JarvisState.LISTENING
                     }
 
@@ -212,20 +157,31 @@ class MainActivity : ComponentActivity() {
                     }
 
                     override fun onEndOfSpeech() {
-                        if (currentGeneration != recognizerGeneration) return
                         jarvisState = JarvisState.THINKING
                     }
 
                     override fun onError(error: Int) {
-                        if (currentGeneration != recognizerGeneration) return
+                        recognitionActive = false
+
                         if (requestInProgress) return
 
                         jarvisState = JarvisState.WAITING
-                        scheduleListening(1200)
+
+                        val retryDelay = when (error) {
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 3000L
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> 4000L
+                            SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> 4000L
+                            SpeechRecognizer.ERROR_NO_MATCH -> 700L
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 700L
+                            else -> 1500L
+                        }
+
+                        scheduleListening(retryDelay)
                     }
 
                     override fun onResults(results: Bundle?) {
-                        if (currentGeneration != recognizerGeneration) return
+                        recognitionActive = false
+
                         if (requestInProgress) return
 
                         val matches = results?.getStringArrayList(
@@ -236,7 +192,7 @@ class MainActivity : ComponentActivity() {
 
                         if (spokenText.isNullOrBlank()) {
                             jarvisState = JarvisState.WAITING
-                            scheduleListening(500)
+                            scheduleListening(700)
                             return
                         }
 
@@ -266,7 +222,60 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             )
+        } catch (e: Exception) {
+            speechRecognizer = null
+            recognitionActive = false
+            jarvisState = JarvisState.WAITING
+            scheduleListening(2000)
+        }
+    }
 
+    private fun scheduleListening(delayMillis: Long) {
+        if (!introFinished || isFinishing || isDestroyed) return
+
+        restartRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+
+        val task = Runnable {
+            restartRunnable = null
+
+            if (!introFinished || isFinishing || isDestroyed) return@Runnable
+            if (requestInProgress || recognitionActive) return@Runnable
+
+            if (
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) return@Runnable
+
+            startListening()
+        }
+
+        restartRunnable = task
+        handler.postDelayed(task, delayMillis)
+    }
+
+    private fun startListening() {
+        if (!introFinished || isFinishing || isDestroyed) return
+        if (requestInProgress || recognitionActive) return
+
+        if (
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+
+        restartRunnable?.let {
+            handler.removeCallbacks(it)
+            restartRunnable = null
+        }
+
+        if (speechRecognizer == null) {
+            initializeSpeechRecognizer()
+        }
+
+        val recognizer = speechRecognizer ?: return
+
+        try {
             val intent = Intent(
                 RecognizerIntent.ACTION_RECOGNIZE_SPEECH
             ).apply {
@@ -291,12 +300,13 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
+            recognitionActive = true
             recognizer.startListening(intent)
 
         } catch (e: Exception) {
-            requestInProgress = false
+            recognitionActive = false
             jarvisState = JarvisState.WAITING
-            scheduleListening(1500)
+            scheduleListening(1800)
         }
     }
 
@@ -353,11 +363,10 @@ class MainActivity : ComponentActivity() {
                 val audioBase64 = json.optString("audioBase64", "")
 
                 runOnUiThread {
-                    requestInProgress = false
-
                     if (audioBase64.isNotBlank()) {
                         playJarvisAudio(audioBase64)
                     } else {
+                        requestInProgress = false
                         jarvisState = JarvisState.WAITING
                         scheduleListening(800)
                     }
@@ -406,16 +415,18 @@ class MainActivity : ComponentActivity() {
                     player.release()
                     mediaPlayer = null
 
+                    requestInProgress = false
                     jarvisState = JarvisState.WAITING
-                    scheduleListening(700)
+                    scheduleListening(800)
                 }
 
                 setOnErrorListener { player, _, _ ->
                     player.release()
                     mediaPlayer = null
 
+                    requestInProgress = false
                     jarvisState = JarvisState.WAITING
-                    scheduleListening(1000)
+                    scheduleListening(1200)
 
                     true
                 }
@@ -427,12 +438,15 @@ class MainActivity : ComponentActivity() {
             mediaPlayer?.release()
             mediaPlayer = null
 
+            requestInProgress = false
             jarvisState = JarvisState.WAITING
-            scheduleListening(1000)
+            scheduleListening(1200)
         }
     }
 
     private fun interruptJarvis() {
+        if (jarvisState != JarvisState.SPEAKING) return
+
         try {
             mediaPlayer?.stop()
         } catch (_: Exception) {
@@ -441,16 +455,16 @@ class MainActivity : ComponentActivity() {
         mediaPlayer?.release()
         mediaPlayer = null
 
+        requestInProgress = false
         jarvisState = JarvisState.WAITING
-        scheduleListening(350)
+
+        scheduleListening(500)
     }
 
     override fun onDestroy() {
-        super.onDestroy()
-
         introFinished = false
         requestInProgress = false
-        recognizerGeneration++
+        recognitionActive = false
 
         restartRunnable?.let {
             handler.removeCallbacks(it)
@@ -475,6 +489,8 @@ class MainActivity : ComponentActivity() {
 
         mediaPlayer?.release()
         mediaPlayer = null
+
+        super.onDestroy()
     }
 }
 
