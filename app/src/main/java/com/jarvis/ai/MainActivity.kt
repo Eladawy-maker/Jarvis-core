@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // استقبال كلام المستخدم وتنفيذ أوامر الهاتف
                 override fun onResults(results: Bundle?) {
 
                     val matches = results?.getStringArrayList(
@@ -164,7 +165,25 @@ class MainActivity : ComponentActivity() {
                     val spokenText = matches?.firstOrNull()
 
                     if (!spokenText.isNullOrBlank()) {
-                        sendToServer(spokenText)
+
+                        val actionReply = JarvisActionRouter.handle(
+                            this@MainActivity,
+                            spokenText
+                        )
+
+                        if (actionReply != null) {
+
+                            sendToServer(
+                                "المستخدم قال: $spokenText. " +
+                                "تم تنفيذ الأمر على الهاتف: $actionReply. " +
+                                "رد عليه بتأكيد مختصر وطبيعي باللهجة المصرية."
+                            )
+
+                        } else {
+
+                            sendToServer(spokenText)
+                        }
+
                     } else {
                         startListening()
                     }
