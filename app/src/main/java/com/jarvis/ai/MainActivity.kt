@@ -2,7 +2,6 @@
 package com.jarvis.ai
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
@@ -12,9 +11,12 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -30,17 +32,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import android.util.Base64
 import kotlin.math.*
 
 enum class JarvisState {
@@ -58,10 +61,20 @@ class MainActivity : ComponentActivity() {
     private var mediaPlayer: MediaPlayer? = null
 
     private var jarvisState by mutableStateOf(JarvisState.WAITING)
-    private var introFinished by mutableStateOf(false)
+    private var introFinished = false
 
     private val serverUrl =
         "https://jarvis-ai-server.astrogame373.workers.dev/chat"
+
+    private val microphonePermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            if (granted) {
+                initializeSpeechRecognizer()
+                startListening()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,37 +105,15 @@ class MainActivity : ComponentActivity() {
 
     private fun checkMicrophonePermission() {
         if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
         ) {
             initializeSpeechRecognizer()
             startListening()
         } else {
-            requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                100
+            microphonePermissionLauncher.launch(
+                Manifest.permission.RECORD_AUDIO
             )
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(
-            requestCode,
-            permissions,
-            grantResults
-        )
-
-        if (
-            requestCode == 100 &&
-            grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED
-        ) {
-            initializeSpeechRecognizer()
-            startListening()
         }
     }
 
@@ -160,7 +151,7 @@ class MainActivity : ComponentActivity() {
                     if (introFinished) {
                         handler.postDelayed({
                             startListening()
-                        }, 1000)
+                        }, 1200)
                     }
                 }
 
@@ -179,26 +170,20 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                override fun onPartialResults(
-                    partialResults: Bundle?
-                ) {}
+                override fun onPartialResults(partialResults: Bundle?) {}
 
-                override fun onEvent(
-                    eventType: Int,
-                    params: Bundle?
-                ) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
             }
         )
     }
 
-    @SuppressLint("MissingPermission")
     private fun startListening() {
 
         if (!introFinished) return
 
         if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
         ) return
 
         try {
@@ -229,16 +214,12 @@ class MainActivity : ComponentActivity() {
                     RecognizerIntent.EXTRA_PARTIAL_RESULTS,
                     false
                 )
-
-                putExtra(
-                    RecognizerIntent.EXTRA_CALLING_PACKAGE,
-                    packageName
-                )
             }
 
             speechRecognizer?.startListening(intent)
 
         } catch (e: Exception) {
+
             jarvisState = JarvisState.WAITING
 
             handler.postDelayed({
@@ -258,8 +239,7 @@ class MainActivity : ComponentActivity() {
             try {
 
                 connection =
-                    URL(serverUrl).openConnection()
-                            as HttpURLConnection
+                    URL(serverUrl).openConnection() as HttpURLConnection
 
                 connection.requestMethod = "POST"
                 connection.connectTimeout = 20000
@@ -301,7 +281,6 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                val reply = json.optString("reply", "")
                 val audioBase64 = json.optString("audioBase64", "")
 
                 runOnUiThread {
@@ -310,6 +289,7 @@ class MainActivity : ComponentActivity() {
                         playJarvisAudio(audioBase64)
                     } else {
                         jarvisState = JarvisState.WAITING
+
                         handler.postDelayed({
                             startListening()
                         }, 800)
@@ -432,9 +412,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/* ==============================
-   JARVIS MAIN INTERFACE
-================================ */
+/* =================================
+   JARVIS CINEMATIC INTRO
+================================= */
 
 @Composable
 fun JarvisApp(
@@ -443,7 +423,6 @@ fun JarvisApp(
     onInterrupt: () -> Unit
 ) {
 
-    var introStarted by remember { mutableStateOf(false) }
     var introComplete by remember { mutableStateOf(false) }
 
     val titleProgress by animateFloatAsState(
@@ -466,15 +445,10 @@ fun JarvisApp(
     )
 
     LaunchedEffect(Unit) {
-
-        introStarted = true
-
-        kotlinx.coroutines.delay(1700)
-
+        delay(1700)
         introComplete = true
 
-        kotlinx.coroutines.delay(1900)
-
+        delay(1900)
         onIntroFinished()
     }
 
@@ -491,23 +465,19 @@ fun JarvisApp(
             text = "JARVIS",
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = screenHeight * (0.39f - 0.39f * titleProgress))
+                .offset(
+                    y = screenHeight * (0.39f * (1f - titleProgress))
+                )
                 .graphicsLayer {
                     scaleX = 1f - (0.48f * titleProgress)
                     scaleY = 1f - (0.48f * titleProgress)
                     alpha = 1f - (0.15f * titleProgress)
                 },
-            style = androidx.compose.ui.text.TextStyle(
+            style = TextStyle(
                 color = Color(0xFFDCEBFF),
-                fontSize = androidx.compose.ui.unit.TextUnit(
-                    48f,
-                    androidx.compose.ui.unit.TextUnitType.Sp
-                ),
-                letterSpacing = androidx.compose.ui.unit.TextUnit(
-                    9f,
-                    androidx.compose.ui.unit.TextUnitType.Sp
-                ),
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Light
+                fontSize = 48.sp,
+                letterSpacing = 9.sp,
+                fontWeight = FontWeight.Light
             )
         )
 
@@ -540,11 +510,11 @@ fun JarvisApp(
     }
 }
 
-/* ==============================
+/* =================================
    NANO PARTICLE ORB
-================================ */
+================================= */
 
-data class NanoParticle(
+private data class NanoParticle(
     val x: Float,
     val y: Float,
     val z: Float
@@ -559,13 +529,12 @@ fun JarvisNanoOrb(
     val particleCount = 360
 
     val particles = remember {
-
         List(particleCount) { index ->
 
-            val y = 1f - (index.toFloat() / (particleCount - 1)) * 2f
+            val y =
+                1f - (index.toFloat() / (particleCount - 1)) * 2f
 
             val radius = sqrt(1f - y * y)
-
             val angle = index * 2.399963f
 
             NanoParticle(
@@ -586,7 +555,7 @@ fun JarvisNanoOrb(
         animationSpec = infiniteRepeatable(
             animation = tween(
                 durationMillis = 9000,
-                easing = androidx.compose.animation.core.LinearEasing
+                easing = LinearEasing
             ),
             repeatMode = RepeatMode.Restart
         ),
@@ -608,8 +577,11 @@ fun JarvisNanoOrb(
 
     val isSpeaking = state == JarvisState.SPEAKING
 
-    val rotation = if (isSpeaking) animatedPhase * 0.22f else 0f
-    val pulse = if (isSpeaking) speakingPulse else 1f
+    val rotation =
+        if (isSpeaking) animatedPhase * 0.22f else 0f
+
+    val pulse =
+        if (isSpeaking) speakingPulse else 1f
 
     Canvas(
         modifier = Modifier
@@ -626,7 +598,9 @@ fun JarvisNanoOrb(
         val silver = Color(0xFFDCEBFF)
         val deepBlue = Color(0xFF3989D6)
 
-        val projected = ArrayList<Offset>(particleCount)
+        val projected = ArrayList<androidx.compose.ui.geometry.Offset>(
+            particleCount
+        )
 
         particles.forEach { particle ->
 
@@ -646,10 +620,12 @@ fun JarvisNanoOrb(
             val y = centerY +
                 particle.y * orbRadius * perspective * pulse * formation
 
-            projected.add(Offset(x, y))
+            projected.add(
+                androidx.compose.ui.geometry.Offset(x, y)
+            )
         }
 
-        // Soft holographic glow
+        // Holographic glow
 
         drawCircle(
             brush = Brush.radialGradient(
@@ -658,13 +634,16 @@ fun JarvisNanoOrb(
                     Color(0x183B9EEB),
                     Color.Transparent
                 ),
-                center = Offset(centerX, centerY),
+                center = androidx.compose.ui.geometry.Offset(
+                    centerX,
+                    centerY
+                ),
                 radius = orbRadius * 1.55f
             ),
             radius = orbRadius * 1.55f
         )
 
-        // Particle connections
+        // Nano particle connections
 
         for (i in particles.indices) {
 
@@ -680,7 +659,9 @@ fun JarvisNanoOrb(
                 val second = projected[next]
 
                 drawLine(
-                    color = blue.copy(alpha = 0.20f * formation),
+                    color = blue.copy(
+                        alpha = 0.20f * formation
+                    ),
                     start = first,
                     end = second,
                     strokeWidth = 0.65f
@@ -688,7 +669,7 @@ fun JarvisNanoOrb(
             }
         }
 
-        // Individual nano particles
+        // Particles
 
         particles.forEachIndexed { index, particle ->
 
@@ -712,7 +693,6 @@ fun JarvisNanoOrb(
             )
 
             if (index % 17 == 0) {
-
                 drawCircle(
                     color = deepBlue.copy(alpha = 0.18f),
                     radius = particleSize * 4f,
@@ -726,7 +706,10 @@ fun JarvisNanoOrb(
         drawCircle(
             color = silver.copy(alpha = 0.28f * formation),
             radius = orbRadius * pulse,
-            center = Offset(centerX, centerY),
+            center = androidx.compose.ui.geometry.Offset(
+                centerX,
+                centerY
+            ),
             style = Stroke(width = 1.1f)
         )
 
@@ -735,7 +718,10 @@ fun JarvisNanoOrb(
         drawCircle(
             color = blue.copy(alpha = 0.14f * formation),
             radius = orbRadius * 1.12f,
-            center = Offset(centerX, centerY),
+            center = androidx.compose.ui.geometry.Offset(
+                centerX,
+                centerY
+            ),
             style = Stroke(width = 0.7f)
         )
     }
