@@ -56,8 +56,9 @@ class MainActivity : ComponentActivity() {
     private var currentState by mutableStateOf(JarvisState.WAITING)
     private var lastMessage by mutableStateOf("SYSTEM READY")
 
+    // JARVIS AI SERVER
     private val serverUrl =
-        "https://jarvis-core-server.astrogame373.workers.dev"
+        "https://jarvis-ai-server.astrogame373.workers.dev"
 
     private val restartListening = Runnable {
         if (!isFinishing && currentState != JarvisState.SPEAKING) {
@@ -186,7 +187,8 @@ class MainActivity : ComponentActivity() {
             var connection: HttpURLConnection? = null
 
             try {
-                connection = URL(serverUrl).openConnection() as HttpURLConnection
+                connection =
+                    URL(serverUrl).openConnection() as HttpURLConnection
 
                 connection.requestMethod = "POST"
                 connection.connectTimeout = 20000
@@ -218,23 +220,31 @@ class MainActivity : ComponentActivity() {
                 val response = JSONObject(responseText)
 
                 if (responseCode !in 200..299) {
-                    throw Exception(
-                        response.optString(
-                            "details",
-                            response.optString("error", "Server error")
-                        )
+                    val details = response.optString(
+                        "details",
+                        response.optString("error", "Server error")
                     )
+
+                    throw Exception("HTTP $responseCode: $details")
                 }
 
                 val reply = response.optString("reply")
                 val audioBase64 = response.optString("audioBase64")
 
-                if (reply.isBlank() || audioBase64.isBlank()) {
-                    throw Exception("Incomplete server response")
+                if (reply.isBlank()) {
+                    throw Exception("Server returned an empty reply")
+                }
+
+                if (audioBase64.isBlank()) {
+                    throw Exception("Server returned no audioBase64")
                 }
 
                 val audioBytes =
                     Base64.decode(audioBase64, Base64.DEFAULT)
+
+                if (audioBytes.isEmpty()) {
+                    throw Exception("Audio data is empty")
+                }
 
                 val audioFile = File(cacheDir, "jarvis_reply.wav")
                 audioFile.writeBytes(audioBytes)
@@ -288,6 +298,7 @@ class MainActivity : ComponentActivity() {
                     player.release()
                     mediaPlayer = null
                     currentState = JarvisState.WAITING
+                    lastMessage = "تعذر تشغيل الصوت"
                     handler.postDelayed(restartListening, 1000)
                     true
                 }
@@ -348,7 +359,6 @@ fun JarvisApp(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
 
-                // TOP HUD
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -373,9 +383,7 @@ fun JarvisApp(
                         )
                     }
 
-                    Column(
-                        horizontalAlignment = Alignment.End
-                    ) {
+                    Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = "CORE SYSTEM",
                             color = dimGold,
@@ -383,9 +391,7 @@ fun JarvisApp(
                             letterSpacing = 2.sp
                         )
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
                                     .size(7.dp)
@@ -410,7 +416,6 @@ fun JarvisApp(
 
                 Spacer(modifier = Modifier.height(15.dp))
 
-                // TOP DIVIDER
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -430,7 +435,6 @@ fun JarvisApp(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // SYSTEM INFORMATION
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -450,7 +454,6 @@ fun JarvisApp(
                     )
                 }
 
-                // ARC REACTOR
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -465,7 +468,6 @@ fun JarvisApp(
                     )
                 }
 
-                // STATUS
                 Text(
                     text = when (state) {
                         JarvisState.LISTENING -> "LISTENING"
@@ -491,7 +493,6 @@ fun JarvisApp(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // BOTTOM HUD PANELS
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -590,7 +591,6 @@ fun JarvisOrb(
     }
 
     Canvas(modifier = modifier) {
-
         val center = Offset(
             size.width / 2f,
             size.height / 2f
@@ -605,7 +605,6 @@ fun JarvisOrb(
 
         val glow = 0.65f + pulse * 0.35f
 
-        // OUTER ATMOSPHERIC GLOW
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
@@ -620,7 +619,6 @@ fun JarvisOrb(
             center = center
         )
 
-        // OUTER TECHNICAL RINGS
         for (i in 0 until 4) {
             val r = radius * (1.75f + i * 0.13f)
 
@@ -632,7 +630,6 @@ fun JarvisOrb(
             )
         }
 
-        // ROTATING MAIN RINGS
         for (i in 0 until 3) {
             val ringRadius = radius * (1.55f + i * 0.17f)
 
@@ -676,7 +673,6 @@ fun JarvisOrb(
             }
         }
 
-        // ROTATING REACTOR STRUCTURE
         for (i in 0 until 8) {
             val rotation =
                 angle * (if (i % 2 == 0) 1f else -1f) + i * 45f
@@ -702,7 +698,6 @@ fun JarvisOrb(
             }
         }
 
-        // RADIAL ENERGY LINES
         for (i in 0 until 48) {
             val radians = Math.toRadians(
                 (i * 7.5f + angle * 0.3f).toDouble()
@@ -730,7 +725,6 @@ fun JarvisOrb(
             )
         }
 
-        // INNER ROTATING CORE RINGS
         for (i in 0 until 3) {
             val r = radius * (0.9f + i * 0.16f)
 
@@ -742,7 +736,6 @@ fun JarvisOrb(
             )
         }
 
-        // CORE ENERGY
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
@@ -759,7 +752,6 @@ fun JarvisOrb(
             center = center
         )
 
-        // CENTRAL ARC REACTOR
         drawCircle(
             color = Color.White.copy(alpha = 0.95f),
             radius = radius * 0.16f,
@@ -773,7 +765,6 @@ fun JarvisOrb(
             style = Stroke(width = 3.dp.toPx())
         )
 
-        // ENERGY PARTICLES
         for (i in 0 until 32) {
             val orbit = radius * (1.15f + (i % 4) * 0.22f)
 
