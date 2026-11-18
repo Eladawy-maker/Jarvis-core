@@ -63,6 +63,10 @@ class MainActivity : ComponentActivity() {
     private var jarvisState by mutableStateOf(JarvisState.WAITING)
     private var introFinished = false
 
+    private var requestInProgress = false
+    private var recognizerGeneration = 0
+    private var restartRunnable: Runnable? = null
+
     private val serverUrl =
         "https://jarvis-ai-server.astrogame373.workers.dev/chat"
 
@@ -71,7 +75,6 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.RequestPermission()
         ) { granted ->
             if (granted) {
-                initializeSpeechRecognizer()
                 startListening()
             }
         }
@@ -108,7 +111,6 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         ) {
-            initializeSpeechRecognizer()
             startListening()
         } else {
             microphonePermissionLauncher.launch(
@@ -117,54 +119,129 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun initializeSpeechRecognizer() {
+    private fun scheduleListening(
+        delayMillis: Long,
+        recreate: Boolean = true
+    ) {
+        if (!introFinished || isFinishing || isDestroyed) return
+
+        restartRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+
+        val task = Runnable {
+            restartRunnable = null
+
+            if (!introFinished || isFinishing || isDestroyed) return@Runnable
+
+            if (
+                checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) return@Runnable
+
+            if (recreate) {
+                startListening()
+            }
+        }
+
+        restartRunnable = task
+        handler.postDelayed(task, delayMillis)
+    }
+
+    private fun startListening() {
+        if (!introFinished || isFinishing || isDestroyed) return
+        if (requestInProgress) return
+
+        if (
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+
+        restartRunnable?.let {
+            handler.removeCallbacks(it)
+            restartRunnable = null
+        }
 
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            jarvisState = JarvisState.WAITING
+            scheduleListening(2500)
             return
         }
 
-        speechRecognizer?.destroy()
+        // إبطال أي جلسة استماع قديمة قبل إنشاء جلسة جديدة
+        recognizerGeneration++
+        val currentGeneration = recognizerGeneration
 
-        speechRecognizer =
-            SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer?.let { oldRecognizer ->
+            try {
+                oldRecognizer.cancel()
+            } catch (_: Exception) {
+            }
 
-        speechRecognizer?.setRecognitionListener(
-            object : RecognitionListener {
+            try {
+                oldRecognizer.destroy()
+            } catch (_: Exception) {
+            }
+        }
 
-                override fun onReadyForSpeech(params: Bundle?) {
-                    jarvisState = JarvisState.LISTENING
-                }
+        speechRecognizer = null
 
-                override fun onBeginningOfSpeech() {
-                    jarvisState = JarvisState.LISTENING
-                }
+        try {
+            val recognizer =
+                SpeechRecognizer.createSpeechRecognizer(this)
 
-                override fun onRmsChanged(rmsdB: Float) {}
+            speechRecognizer = recognizer
 
-                override fun onBufferReceived(buffer: ByteArray?) {}
+            recognizer.setRecognitionListener(
+                object : RecognitionListener {
 
-                override fun onEndOfSpeech() {
-                    jarvisState = JarvisState.THINKING
-                }
-
-                override fun onError(error: Int) {
-                    if (introFinished) {
-                        handler.postDelayed({
-                            startListening()
-                        }, 1200)
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        if (currentGeneration != recognizerGeneration) return
+                        jarvisState = JarvisState.LISTENING
                     }
-                }
 
-                // استقبال كلام المستخدم وتنفيذ أوامر الهاتف
-                override fun onResults(results: Bundle?) {
+                    override fun onBeginningOfSpeech() {
+                        if (currentGeneration != recognizerGeneration) return
+                        jarvisState = JarvisState.LISTENING
+                    }
 
-                    val matches = results?.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION
-                    )
+                    override fun onRmsChanged(rmsdB: Float) {
+                    }
 
-                    val spokenText = matches?.firstOrNull()
+                    override fun onBufferReceived(buffer: ByteArray?) {
+                    }
 
-                    if (!spokenText.isNullOrBlank()) {
+                    override fun onEndOfSpeech() {
+                        if (currentGeneration != recognizerGeneration) return
+                        jarvisState = JarvisState.THINKING
+                    }
+
+                    override fun onError(error: Int) {
+                        if (currentGeneration != recognizerGeneration) return
+                        if (requestInProgress) return
+
+                        jarvisState = JarvisState.WAITING
+                        scheduleListening(1200)
+                    }
+
+                    override fun onResults(results: Bundle?) {
+                        if (currentGeneration != recognizerGeneration) return
+                        if (requestInProgress) return
+
+                        val matches = results?.getStringArrayList(
+                            SpeechRecognizer.RESULTS_RECOGNITION
+                        )
+
+                        val spokenText = matches?.firstOrNull()
+
+                        if (spokenText.isNullOrBlank()) {
+                            jarvisState = JarvisState.WAITING
+                            scheduleListening(500)
+                            return
+                        }
+
+                        requestInProgress = true
+                        jarvisState = JarvisState.THINKING
 
                         val actionReply = JarvisActionRouter.handle(
                             this@MainActivity,
@@ -172,48 +249,27 @@ class MainActivity : ComponentActivity() {
                         )
 
                         if (actionReply != null) {
-
                             sendToServer(
                                 "المستخدم قال: $spokenText. " +
                                 "تم تنفيذ الأمر على الهاتف: $actionReply. " +
                                 "رد عليه بتأكيد مختصر وطبيعي باللهجة المصرية."
                             )
-
                         } else {
-
                             sendToServer(spokenText)
                         }
+                    }
 
-                    } else {
-                        startListening()
+                    override fun onPartialResults(partialResults: Bundle?) {
+                    }
+
+                    override fun onEvent(eventType: Int, params: Bundle?) {
                     }
                 }
-
-                override fun onPartialResults(partialResults: Bundle?) {}
-
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            }
-        )
-    }
-
-    private fun startListening() {
-
-        if (!introFinished) return
-
-        if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) return
-
-        try {
-            if (speechRecognizer == null) {
-                initializeSpeechRecognizer()
-            }
+            )
 
             val intent = Intent(
                 RecognizerIntent.ACTION_RECOGNIZE_SPEECH
             ).apply {
-
                 putExtra(
                     RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
@@ -235,28 +291,22 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            speechRecognizer?.startListening(intent)
+            recognizer.startListening(intent)
 
         } catch (e: Exception) {
-
+            requestInProgress = false
             jarvisState = JarvisState.WAITING
-
-            handler.postDelayed({
-                startListening()
-            }, 1500)
+            scheduleListening(1500)
         }
     }
 
     private fun sendToServer(text: String) {
-
         jarvisState = JarvisState.THINKING
 
         Thread {
-
             var connection: HttpURLConnection? = null
 
             try {
-
                 connection =
                     URL(serverUrl).openConnection() as HttpURLConnection
 
@@ -303,26 +353,21 @@ class MainActivity : ComponentActivity() {
                 val audioBase64 = json.optString("audioBase64", "")
 
                 runOnUiThread {
+                    requestInProgress = false
 
                     if (audioBase64.isNotBlank()) {
                         playJarvisAudio(audioBase64)
                     } else {
                         jarvisState = JarvisState.WAITING
-
-                        handler.postDelayed({
-                            startListening()
-                        }, 800)
+                        scheduleListening(800)
                     }
                 }
 
             } catch (e: Exception) {
-
                 runOnUiThread {
+                    requestInProgress = false
                     jarvisState = JarvisState.WAITING
-
-                    handler.postDelayed({
-                        startListening()
-                    }, 1500)
+                    scheduleListening(1500)
                 }
 
             } finally {
@@ -333,9 +378,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playJarvisAudio(audioBase64: String) {
-
         try {
-
             mediaPlayer?.release()
             mediaPlayer = null
 
@@ -352,7 +395,6 @@ class MainActivity : ComponentActivity() {
             audioFile.writeBytes(audioBytes)
 
             mediaPlayer = MediaPlayer().apply {
-
                 setDataSource(audioFile.absolutePath)
 
                 setOnPreparedListener { player ->
@@ -365,22 +407,15 @@ class MainActivity : ComponentActivity() {
                     mediaPlayer = null
 
                     jarvisState = JarvisState.WAITING
-
-                    handler.postDelayed({
-                        startListening()
-                    }, 700)
+                    scheduleListening(700)
                 }
 
                 setOnErrorListener { player, _, _ ->
-
                     player.release()
                     mediaPlayer = null
 
                     jarvisState = JarvisState.WAITING
-
-                    handler.postDelayed({
-                        startListening()
-                    }, 1000)
+                    scheduleListening(1000)
 
                     true
                 }
@@ -389,41 +424,53 @@ class MainActivity : ComponentActivity() {
             }
 
         } catch (e: Exception) {
-
             mediaPlayer?.release()
             mediaPlayer = null
 
             jarvisState = JarvisState.WAITING
-
-            handler.postDelayed({
-                startListening()
-            }, 1000)
+            scheduleListening(1000)
         }
     }
 
     private fun interruptJarvis() {
-
         try {
             mediaPlayer?.stop()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         mediaPlayer?.release()
         mediaPlayer = null
 
         jarvisState = JarvisState.WAITING
-
-        handler.postDelayed({
-            startListening()
-        }, 350)
+        scheduleListening(350)
     }
 
     override fun onDestroy() {
         super.onDestroy()
 
+        introFinished = false
+        requestInProgress = false
+        recognizerGeneration++
+
+        restartRunnable?.let {
+            handler.removeCallbacks(it)
+            restartRunnable = null
+        }
+
         handler.removeCallbacksAndMessages(null)
 
-        speechRecognizer?.cancel()
-        speechRecognizer?.destroy()
+        speechRecognizer?.let {
+            try {
+                it.cancel()
+            } catch (_: Exception) {
+            }
+
+            try {
+                it.destroy()
+            } catch (_: Exception) {
+            }
+        }
+
         speechRecognizer = null
 
         mediaPlayer?.release()
@@ -441,7 +488,6 @@ fun JarvisApp(
     onIntroFinished: () -> Unit,
     onInterrupt: () -> Unit
 ) {
-
     var introComplete by remember { mutableStateOf(false) }
 
     val titleProgress by animateFloatAsState(
@@ -477,7 +523,6 @@ fun JarvisApp(
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-
         val screenHeight = maxHeight
 
         androidx.compose.foundation.text.BasicText(
@@ -501,7 +546,6 @@ fun JarvisApp(
         )
 
         if (orbProgress > 0f) {
-
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -519,7 +563,6 @@ fun JarvisApp(
                     },
                 contentAlignment = Alignment.Center
             ) {
-
                 JarvisNanoOrb(
                     state = state,
                     formation = orbProgress
@@ -544,12 +587,10 @@ fun JarvisNanoOrb(
     state: JarvisState,
     formation: Float
 ) {
-
     val particleCount = 360
 
     val particles = remember {
         List(particleCount) { index ->
-
             val y =
                 1f - (index.toFloat() / (particleCount - 1)) * 2f
 
@@ -607,7 +648,6 @@ fun JarvisNanoOrb(
             .fillMaxWidth()
             .height(360.dp)
     ) {
-
         val centerX = size.width / 2f
         val centerY = size.height / 2f
 
@@ -622,7 +662,6 @@ fun JarvisNanoOrb(
         )
 
         particles.forEach { particle ->
-
             val rotatedX =
                 particle.x * cos(rotation) -
                 particle.z * sin(rotation)
@@ -644,8 +683,6 @@ fun JarvisNanoOrb(
             )
         }
 
-        // Holographic glow
-
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
@@ -662,10 +699,7 @@ fun JarvisNanoOrb(
             radius = orbRadius * 1.55f
         )
 
-        // Nano particle connections
-
         for (i in particles.indices) {
-
             val first = projected[i]
 
             val neighbors = listOf(
@@ -674,7 +708,6 @@ fun JarvisNanoOrb(
             )
 
             neighbors.forEach { next ->
-
                 val second = projected[next]
 
                 drawLine(
@@ -688,10 +721,7 @@ fun JarvisNanoOrb(
             }
         }
 
-        // Particles
-
         particles.forEachIndexed { index, particle ->
-
             val point = projected[index]
 
             val depthAlpha =
@@ -720,8 +750,6 @@ fun JarvisNanoOrb(
             }
         }
 
-        // Transparent spherical boundary
-
         drawCircle(
             color = silver.copy(alpha = 0.28f * formation),
             radius = orbRadius * pulse,
@@ -731,8 +759,6 @@ fun JarvisNanoOrb(
             ),
             style = Stroke(width = 1.1f)
         )
-
-        // Outer holographic ring
 
         drawCircle(
             color = blue.copy(alpha = 0.14f * formation),
