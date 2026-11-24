@@ -78,7 +78,6 @@ class MainActivity : ComponentActivity() {
     private var introFinished = false
     private var destroyed = false
 
-    // منع تشغيل أكثر من جلسة استماع أو طلب في نفس الوقت
     private var recognizerActive = false
     private var requestInFlight = false
     private var speechInProgress = false
@@ -97,7 +96,8 @@ class MainActivity : ComponentActivity() {
     private data class ServerReply(
         val text: String,
         val audioBase64: String,
-        val audioMimeType: String
+        val audioMimeType: String,
+        val audioError: String
     )
 
     private val microphonePermissionLauncher =
@@ -562,7 +562,8 @@ class MainActivity : ComponentActivity() {
                     audioMimeType = json.optString(
                         "audioMimeType",
                         json.optString("mimeType", "audio/mpeg")
-                    )
+                    ),
+                    audioError = json.optString("audioError", "")
                 )
 
                 runOnUiThread {
@@ -612,34 +613,43 @@ class MainActivity : ComponentActivity() {
 
     private fun handleServerReply(reply: ServerReply) {
 
-        if (reply.audioBase64.isNotBlank()) {
+        if (reply.audioBase64.isBlank()) {
 
-            try {
-
-                val audioBytes = Base64.decode(
-                    reply.audioBase64,
-                    Base64.DEFAULT
-                )
-
-                if (audioBytes.isEmpty()) {
-                    throw Exception("الملف الصوتي فارغ.")
-                }
-
-                playJarvisAudio(
-                    audioBytes,
-                    reply.audioMimeType,
-                    reply.text
-                )
-
-                return
-
-            } catch (e: Exception) {
-                // لو الصوت فشل، نستخدم الرد النصي كبديل.
+            val reason = reply.audioError.ifBlank {
+                "السيرفر لم يرسل ملف الصوت."
             }
+
+            showMessage("مشكلة صوت ElevenLabs: ${reason.take(180)}")
+
+            speakFallback(reply.text)
+            return
         }
 
-        // لا نتجاهل الرد النصي لو الصوت غير موجود.
-        speakFallback(reply.text)
+        try {
+
+            val audioBytes = Base64.decode(
+                reply.audioBase64,
+                Base64.DEFAULT
+            )
+
+            if (audioBytes.isEmpty()) {
+                throw Exception("ملف الصوت وصل فارغًا.")
+            }
+
+            playJarvisAudio(
+                audioBytes,
+                reply.audioMimeType,
+                reply.text
+            )
+
+        } catch (e: Exception) {
+
+            showMessage(
+                "خطأ في قراءة صوت ElevenLabs: ${e.message ?: "غير معروف"}"
+            )
+
+            speakFallback(reply.text)
+        }
     }
 
     // ==============================
@@ -737,7 +747,7 @@ class MainActivity : ComponentActivity() {
                 finishSpeaking()
             }
 
-            player.setOnErrorListener { failedPlayer, _, _ ->
+            player.setOnErrorListener { failedPlayer, what, extra ->
 
                 failedPlayer.release()
 
@@ -748,6 +758,9 @@ class MainActivity : ComponentActivity() {
                 speechInProgress = false
 
                 if (!destroyed) {
+                    showMessage(
+                        "خطأ تشغيل صوت جارفيس: what=$what extra=$extra"
+                    )
                     speakFallback(fallbackText)
                 }
 
@@ -761,6 +774,9 @@ class MainActivity : ComponentActivity() {
             stopMediaPlayer()
 
             if (!destroyed) {
+                showMessage(
+                    "تعذر تشغيل صوت جارفيس: ${e.message ?: "خطأ غير معروف"}"
+                )
                 speakFallback(fallbackText)
             }
         }
