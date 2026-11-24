@@ -1,4 +1,15 @@
+
 pluginManagement {
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id == "org.jetbrains.kotlin.android") {
+                useModule(
+                    "org.jetbrains.kotlin:kotlin-gradle-plugin:${requested.version}"
+                )
+            }
+        }
+    }
+
     repositories {
         google()
         mavenCentral()
